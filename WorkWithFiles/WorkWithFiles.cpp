@@ -8,14 +8,15 @@
 #include <random>
 #include <cstdio> // Для fopen, fread, fwrite, fclose
 #include <sstream> // Для std::istringstream
+#include <limits>
 #pragma comment(lib, "winmm.lib")
 #include <mmsystem.h> // Для PlaySound
 
 
 // Прототипы функций
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
-void SaveState(HWND hwnd, int method);
-void LoadState(HWND hwnd, int cmdN, int method);
+void SaveState(HWND hwnd);
+void LoadState(HWND hwnd, int cmdN);
 COLORREF GetRandomColor();
 void CreateWinAPIMenu(HWND hwnd);
 void ResetGridState(HWND hwnd);
@@ -95,7 +96,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrevInstance, PWSTR pCmdLine, in
     }
 
     int cmdN = 0; // Обработка аргументов
-    int method = 3; // По умолчанию используем fstream
+    method = 3; // По умолчанию используем fstream
     for (int i = 1; i < argc; ++i) {
         if (wcscmp(argv[i], L"-m") == 0) {
             method = 1; // Отображение файлов на память
@@ -121,7 +122,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrevInstance, PWSTR pCmdLine, in
     LocalFree(argv); // Освобождение памяти
 
     // Инициализация состояния сетки
-    LoadState(hwnd, cmdN, method);
+    LoadState(hwnd, cmdN);
 
     RECT rect;
     GetClientRect(hwnd, &rect);
@@ -329,7 +330,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
     }
     case WM_DESTROY:
     {
-        SaveState(hwnd, method);
+        SaveState(hwnd);
 
         HBRUSH hBrush = (HBRUSH)GetClassLongPtr(hwnd, GCLP_HBRBACKGROUND);
         if (hBrush) {
@@ -348,48 +349,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 /// Функция для сохранения состояния сетки в файл
 /// </summary>
 /// <param name="hwnd"> Дескриптор окна </param>
-/// <param name="method"> Способ работы с файлами, переданный через консоль </param>
-void SaveState(HWND hwnd, int method) {
+void SaveState(HWND hwnd) {
     switch (method) {
     case 1: // Отображение файлов на память
     {
-        HANDLE hFile = CreateFile(
-            stateFileName, 
-            GENERIC_READ | GENERIC_WRITE, 
-            0, 
-            NULL, 
-            CREATE_ALWAYS, 
-            FILE_ATTRIBUTE_NORMAL, 
-            NULL
-        );
-        if (hFile == INVALID_HANDLE_VALUE) return;
-
-        HANDLE hMapFile = CreateFileMapping(
-            hFile, 
-            NULL, 
-            PAGE_READWRITE, 
-            0, 
-            1024, 
-            NULL
-        );
-        if (!hMapFile) {
-            CloseHandle(hFile);
-            return;
-        }
-
-        LPVOID pMap = MapViewOfFile(
-            hMapFile, 
-            FILE_MAP_ALL_ACCESS, 
-            0, 
-            0, 
-            1024
-        );
-        if (!pMap) {
-            CloseHandle(hMapFile);
-            CloseHandle(hFile);
-            return;
-        }
-
         std::string data = std::to_string(n) + "\n";
         RECT rect;
         GetWindowRect(hwnd, &rect);
@@ -399,9 +362,48 @@ void SaveState(HWND hwnd, int method) {
         data += std::string(1, currentPlayer) + "\n";
         for (int i = 0; i < n; ++i) {
             for (int j = 0; j < n; ++j) {
-                data += gridState[i][j];
+                data += std::string(1, gridState[i][j]);
             }
             data += "\n";
+        }
+
+        DWORD dataSize = static_cast<DWORD>(data.size());
+
+        HANDLE hFile = CreateFile(
+            stateFileName,
+            GENERIC_READ | GENERIC_WRITE,
+            0,
+            NULL,
+            CREATE_ALWAYS,
+            FILE_ATTRIBUTE_NORMAL,
+            NULL
+        );
+        if (hFile == INVALID_HANDLE_VALUE) return;
+
+        HANDLE hMapFile = CreateFileMapping(
+            hFile,
+            NULL,
+            PAGE_READWRITE,
+            0,
+            dataSize,
+            NULL
+        );
+        if (!hMapFile) {
+            CloseHandle(hFile);
+            return;
+        }
+
+        LPVOID pMap = MapViewOfFile(
+            hMapFile,
+            FILE_MAP_ALL_ACCESS,
+            0,
+            0,
+            dataSize
+        );
+        if (!pMap) {
+            CloseHandle(hMapFile);
+            CloseHandle(hFile);
+            return;
         }
 
         CopyMemory(pMap, data.c_str(), data.size());
@@ -498,8 +500,7 @@ void SaveState(HWND hwnd, int method) {
 /// </summary>
 /// <param name="hwnd"> Дескриптор окна </param>
 /// <param name="cmdN"> Параметр n, переданный через консоль </param>
-/// <param name="method"> Способ работы с файлами, переданный через консоль </param>
-void LoadState(HWND hwnd, int cmdN, int method) {
+void LoadState(HWND hwnd, int cmdN) {
     switch (method) {
     case 1: // Отображение файлов на память
     {
@@ -530,12 +531,12 @@ void LoadState(HWND hwnd, int cmdN, int method) {
         int savedN;
         iss >> savedN;
         n = savedN;
-        iss.ignore();
+        iss.ignore(1000, '\n');
 
         int width, height;
         iss >> width >> height;
         SetWindowPos(hwnd, NULL, 0, 0, width, height, SWP_NOMOVE | SWP_NOZORDER);
-        iss.ignore();
+        iss.ignore(1000, '\n');
 
         int r, g, b;
         iss >> r >> g >> b;
@@ -546,10 +547,10 @@ void LoadState(HWND hwnd, int cmdN, int method) {
         DeleteObject(hOldBrush);
         iss >> r >> g >> b;
         gridColor = RGB(r, g, b);
-        iss.ignore();
+        iss.ignore(1000, '\n');
 
         iss >> currentPlayer;
-        iss.ignore();
+        iss.ignore(1000, '\n');
 
         if (!cmdN || (cmdN == n)) {
             gridState.resize(n, std::vector<char>(n, '_'));
@@ -557,7 +558,7 @@ void LoadState(HWND hwnd, int cmdN, int method) {
                 for (int j = 0; j < n; ++j) {
                     iss.get(gridState[i][j]);
                 }
-                iss.ignore();
+                iss.ignore(1000, '\n');
             }
             n = savedN;
         }
@@ -705,19 +706,18 @@ void LoadState(HWND hwnd, int cmdN, int method) {
             DefaultLoad();
             break;
         }
-        buffer[fileSize] = '\0';
 
         // Чтение параметров
         std::istringstream iss(buffer.data());
         int savedN;
         iss >> savedN;
         n = savedN;
-        iss.ignore();
+        iss.ignore(1000, '\n');
 
         int width, height;
         iss >> width >> height;
         SetWindowPos(hwnd, NULL, 0, 0, width, height, SWP_NOMOVE | SWP_NOZORDER);
-        iss.ignore();
+        iss.ignore(1000, '\n');
 
         int r, g, b;
         iss >> r >> g >> b;
@@ -728,10 +728,10 @@ void LoadState(HWND hwnd, int cmdN, int method) {
         DeleteObject(hOldBrush);
         iss >> r >> g >> b;
         gridColor = RGB(r, g, b);
-        iss.ignore();
+        iss.ignore(1000, '\n');
 
         iss >> currentPlayer;
-        iss.ignore();
+        iss.ignore(1000, '\n');
 
         if (!cmdN || (cmdN == n)) {
             gridState.resize(n, std::vector<char>(n, '_'));
@@ -739,7 +739,7 @@ void LoadState(HWND hwnd, int cmdN, int method) {
                 for (int j = 0; j < n; ++j) {
                     iss.get(gridState[i][j]);
                 }
-                iss.ignore();
+                iss.ignore(1000, '\n');
             }
             n = savedN;
         }
